@@ -1,20 +1,48 @@
-import os, json, re, requests
-from dotenv import load_dotenv
+import os, json, re, requests, socket, urllib.parse as u
 from datetime import date, timedelta
 from tenacity import retry, wait_exponential, stop_after_attempt
 from sqlalchemy import create_engine, text
 
-load_dotenv()
+# ----------------------------
+# Required env vars (fail fast)
+# ----------------------------
+REQUIRED = ["DB_URL", "FB_TOKEN", "ACCOUNT_ID"]
+missing = [k for k in REQUIRED if not os.getenv(k)]
+if missing:
+    raise RuntimeError(f"Missing env vars: {', '.join(missing)}")
 
-DB_URL = os.environ["DB_URL"]
-SSL = os.getenv("DB_SSLMODE", "require")
-engine = create_engine(DB_URL, connect_args={"sslmode": SSL})
+DB_URL     = os.getenv("DB_URL")            # e.g. postgresql+psycopg2://user:pass@db.xxx.supabase.co:5432/postgres?sslmode=require
+FB_TOKEN   = os.getenv("FB_TOKEN", "")
+ACCOUNT_ID = os.getenv("ACCOUNT_ID", "")    # without 'act_'
+DB_SSLMODE = os.getenv("DB_SSLMODE", "require")  # default require
 
+# ----------------------------
+# SQLAlchemy engine (lazy init)
+# ----------------------------
+engine = None
+
+def build_engine():
+    # If DB_URL already has ?sslmode=require it’s fine; we also pass connect_args to be explicit.
+    connect_args = {"sslmode": DB_SSLMODE, "connect_timeout": 10}
+    eng = create_engine(
+        DB_URL,
+        connect_args=connect_args,
+        pool_pre_ping=True,   # heals broken connections
+        pool_size=2,
+        max_overflow=0,
+    )
+    return eng
+
+def get_engine():
+    global engine
+    if engine is None:
+        engine = build_engine()
+    return engine
+
+# ----------------------------
+# Facebook Graph API client
+# ----------------------------
 BASE = "https://graph.facebook.com/v19.0"
-FB_TOKEN = os.getenv("FB_TOKEN", "")
-ACCOUNT_ID = os.getenv("ACCOUNT_ID", "")  # without "act_" prefix
-
-# --- purchase extraction helpers ---
 PURCHASE_PAT = re.compile(r"purchase", re.I)
 
 def extract_purchase_count(actions):
@@ -39,7 +67,6 @@ def extract_purchase_value(action_values):
                     pass
     return total
 
-# --- low-level fetch (HTTP, paginated) ---
 @retry(wait=wait_exponential(min=1, max=60), stop=stop_after_attempt(5))
 def _fetch(url, params):
     headers = {"Authorization": f"Bearer {FB_TOKEN}"}
@@ -56,16 +83,13 @@ def _fetch(url, params):
         next_url = (j.get("paging") or {}).get("next")
         if not next_url:
             break
-        # after the first page, pass empty params because 'next' already encodes them
-        url, params = next_url, {}
+        url, params = next_url, {}  # 'next' already includes all params
     return out
 
 def fetch_insights(*args, **kwargs):
     """
-    Accepts either explicit dates (since/until) or a date_preset like 'yesterday'.
-    Examples:
-      fetch_insights("2025-10-06", "2025-10-07", time_increment=1)
-      fetch_insights(date_preset="yesterday", time_increment=1)
+    fetch_insights("2025-10-06", "2025-10-07", time_increment=1)
+    fetch_insights(date_preset="yesterday", time_increment=1)
     """
     url = f"{BASE}/act_{ACCOUNT_ID}/insights"
     if "date_preset" in kwargs:
@@ -75,7 +99,9 @@ def fetch_insights(*args, **kwargs):
         params = {"time_range": {"since": since, "until": until}, "time_increment": kwargs.get("time_increment", 1)}
     return _fetch(url, params)
 
-# --- DB upsert ---
+# ----------------------------
+# Upsert SQL
+# ----------------------------
 UPSERT_SQL = text("""
 insert into fb_ad_daily
   (ad_id, ad_name, adset_id, adset_name, campaign_id, campaign_name,
@@ -97,7 +123,9 @@ on conflict (ad_id, date_start) do update set
 """)
 
 def upsert_rows(rows):
-    with engine.begin() as c:
+    eng = get_engine()
+    inserted = 0
+    with eng.begin() as c:
         for r in rows:
             purchases = extract_purchase_count(r.get("actions"))
             revenue   = extract_purchase_value(r.get("action_values"))
@@ -118,11 +146,15 @@ def upsert_rows(rows):
                 raw_actions=json.dumps(r.get("actions")),
                 raw_action_values=json.dumps(r.get("action_values")),
             ))
+            inserted += 1
+    print(f"[DB] upserted rows: {inserted}")
 
-# --- job runners ---
+# ----------------------------
+# Job runners
+# ----------------------------
 def backfill(days=365, chunk_days=30):
     """
-    One-time: pull ~1y history in ~30-day chunks (daily rows).
+    Example backfill (adjust dates!).
     """
     start = date.fromisoformat("2025-09-11")
     end   = date.fromisoformat("2025-09-21")
@@ -138,10 +170,12 @@ def daily(rolling_days=14):
     """
     Daily cron: re-pull a rolling window to capture late conversions.
     """
+    print("[CRON] fetching 'yesterday' from FB insights…")
     rows = fetch_insights(date_preset="yesterday", time_increment=1)
+    print(f"[CRON] fetched rows: {len(rows)}")
     upsert_rows(rows)
-    print(f"Refreshed yesterday: {len(rows)} rows") 
- 
+    print(f"[CRON] done (rolling_days hint = {rolling_days})")
+
 if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser()

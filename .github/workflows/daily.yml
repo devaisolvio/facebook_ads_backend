@@ -1,11 +1,10 @@
 name: daily-db-update
 on:
   schedule:
-    # Run at both UTC times and let your code be idempotent,
-    # or inside your code gate to 08:00 America/New_York.
     - cron: "0 12 * * *"
     - cron: "0 13 * * *"
   workflow_dispatch: {}
+
 jobs:
   run:
     runs-on: ubuntu-latest
@@ -19,17 +18,19 @@ jobs:
       - name: Install deps
         run: pip install -r requirements.txt
 
-      - name: Run daily job
-        # EITHER call the module runner...
-        run: python -m src.cron_entry
-        # ...OR call your function directly without a runner:
-        # run: python -c "from src.cron import update_latest_data; update_latest_data()"
+      # Force IPv4 + SSL for Supabase Postgres (replace host with YOUR project host)
+      - name: Force IPv4 + SSL for Postgres
+        run: |
+          IPV4=$(getent ahostsv4 db.<<<YOURPROJECT>>>.supabase.co | awk '{print $1; exit}')
+          echo "PGHOSTADDR=$IPV4" >> $GITHUB_ENV
+          echo "PGSSLMODE=require" >> $GITHUB_ENV
 
+      - name: Run daily job
+        run: python -m src.cron_entry
         env:
+          DB_URL: ${{ secrets.DB_URL }}                 # include ?sslmode=require or rely on PGSSLMODE
+          FB_TOKEN: ${{ secrets.FB_TOKEN }}
+          ACCOUNT_ID: ${{ secrets.ACCOUNT_ID }}         # without "act_"
+          # optional if you also call Supabase REST elsewhere:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
-          DB_URL: ${{ secrets.DB_URL }}
-          FB_TOKEN : ${{secrets.FB_TOKEN}}
-          ACCOUNT_ID : ${{secrets.ACCOUNT_ID}}
-          DB_SSLMODE : ${{ secrets.DB_SSLMODE}}
-          # add any other env your cron uses
