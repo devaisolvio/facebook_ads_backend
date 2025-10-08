@@ -1,0 +1,7 @@
+name = "daily-db-updater"
+main = "worker_cron.py"
+compatibility_date = "2025-09-01"
+
+[triggers]
+# Run at both 12:00 & 13:00 UTC; code gates to 08:00 America/New_York (handles DST)
+crons = ["0 12 * * *", "0 13 * * *"]
