@@ -60,33 +60,19 @@ def _fetch(url, params):
         url, params = next_url, {}
     return out
 
-def fetch_insights(since: str, until: str, time_increment: int = 1):
+def fetch_insights(*args, **kwargs):
     """
-    Fetch daily ad-level insights between [since, until].
-    Minimum necessary change: time_increment=1 (daily) so launch-day logic is possible.
+    Accepts either explicit dates (since/until) or a date_preset like 'yesterday'.
+    Examples:
+      fetch_insights("2025-10-06", "2025-10-07", time_increment=1)
+      fetch_insights(date_preset="yesterday", time_increment=1)
     """
     url = f"{BASE}/act_{ACCOUNT_ID}/insights"
-    params = {
-    "level": "ad",
-    "time_increment": time_increment,  # 1 for daily
-    "time_range": json.dumps({"since": since, "until": until}),
-    "filtering": json.dumps([{
-        "field": "campaign.name",
-        "operator": "CONTAIN",
-        "value": "Testing"              # NOTE: this is case-sensitive
-    }]),
-    "fields": ",".join([
-        "date_start","date_stop",
-        "ad_id","ad_name",
-        "adset_id","adset_name",
-        "campaign_id","campaign_name",
-        "impressions","reach","spend","ctr",
-        "actions","action_values"       # we'll parse purchases/revenue from these
-    ]),
-    "action_report_time": "conversion",
-    "action_attribution_windows": json.dumps(["7d_click","1d_view"]),
-    "limit": 5000
-}
+    if "date_preset" in kwargs:
+        params = {"date_preset": kwargs["date_preset"], "time_increment": kwargs.get("time_increment", 1)}
+    else:
+        since, until = args
+        params = {"time_range": {"since": since, "until": until}, "time_increment": kwargs.get("time_increment", 1)}
     return _fetch(url, params)
 
 # --- DB upsert ---
@@ -152,12 +138,10 @@ def daily(rolling_days=14):
     """
     Daily cron: re-pull a rolling window to capture late conversions.
     """
-    start = date.fromisoformat("2025-09-")
-    end   = date.fromisoformat("2025-10-07")
-    rows = fetch_insights(start.isoformat(), end.isoformat(), time_increment=1)
+    rows = fetch_insights(date_preset="yesterday", time_increment=1)
     upsert_rows(rows)
-    print(f"Refreshed {start}..{end}: {len(rows)} rows")
-
+    print(f"Refreshed yesterday: {len(rows)} rows") 
+ 
 if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser()
