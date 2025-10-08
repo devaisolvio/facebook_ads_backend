@@ -3,8 +3,8 @@ import time
 from flask import Flask, jsonify
 from flask_cors import CORS
 
-from build_cohorts import build_cohorts_function      # your existing builder
-from util  import df_to_records                 # <- reuse the previous util
+from src.build_cohorts import build_cohorts_function      # your existing builder
+from src.util  import df_to_records                 # <- reuse the previous util
 
 app = Flask(__name__)
 CORS(app)  # keep wide-open for dev; restrict origins in prod
