@@ -1,8 +1,8 @@
 name: daily-db-update
 on:
   schedule:
-    - cron: "0 12 * * *"
-    - cron: "0 13 * * *"
+    - cron: "0 12 * * *"   # 08:00 EDT
+    - cron: "0 13 * * *"   # 08:00 EST
   workflow_dispatch: {}
 
 jobs:
@@ -18,19 +18,10 @@ jobs:
       - name: Install deps
         run: pip install -r requirements.txt
 
-      # Force IPv4 + SSL for Supabase Postgres (replace host with YOUR project host)
-      - name: Force IPv4 + SSL for Postgres
-        run: |
-         IPV4=$(getent ahostsv4 db.zkkkjlveoyaebhldiluf.supabase.co | awk '{print $1; exit}')
-         echo "PGHOSTADDR=$IPV4" >> $GITHUB_ENV
-         echo "PGSSLMODE=require" >> $GITHUB_ENV
-
       - name: Run daily job
         run: python -m src.cron_entry
         env:
-          DB_URL: ${{ secrets.DB_URL }}                 # include ?sslmode=require or rely on PGSSLMODE
-          FB_TOKEN: ${{ secrets.FB_TOKEN }}
-          ACCOUNT_ID: ${{ secrets.ACCOUNT_ID }}         # without "act_"
-          # optional if you also call Supabase REST elsewhere:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
+          FB_TOKEN: ${{ secrets.FB_TOKEN }}
+          ACCOUNT_ID: ${{ secrets.ACCOUNT_ID }}
