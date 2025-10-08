@@ -21,9 +21,9 @@ jobs:
       # Force IPv4 + SSL for Supabase Postgres (replace host with YOUR project host)
       - name: Force IPv4 + SSL for Postgres
         run: |
-          IPV4=$(getent ahostsv4 db.<<<YOURPROJECT>>>.supabase.co | awk '{print $1; exit}')
-          echo "PGHOSTADDR=$IPV4" >> $GITHUB_ENV
-          echo "PGSSLMODE=require" >> $GITHUB_ENV
+         IPV4=$(getent ahostsv4 db.zkkkjlveoyaebhldiluf.supabase.co | awk '{print $1; exit}')
+         echo "PGHOSTADDR=$IPV4" >> $GITHUB_ENV
+         echo "PGSSLMODE=require" >> $GITHUB_ENV
 
       - name: Run daily job
         run: python -m src.cron_entry
