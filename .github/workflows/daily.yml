@@ -29,4 +29,7 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
           DB_URL: ${{ secrets.DB_URL }}
+          FB_TOKEN : ${{secrets.FB_TOKEN}}
+          ACCOUNT_ID : ${{secrets.ACCOUNT_ID}}
+          DB_SSLMODE : ${{ secrets.DB_SSLMODE}}
           # add any other env your cron uses
