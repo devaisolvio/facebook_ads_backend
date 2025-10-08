@@ -1,16 +1,18 @@
 name: daily-db-update
 on:
   schedule:
-    - cron: "0 12 * * *"   # 08:00 EDT
-    - cron: "0 13 * * *"   # 08:00 EST
+    - cron: "0 6 * * *"   # 08:00 CEST (UTC+2, summer)
+    - cron: "0 7 * * *"   # 08:00 CET  (UTC+1, winter)
   workflow_dispatch: {}
 
 jobs:
   run:
     runs-on: ubuntu-latest
+    concurrency:
+      group: daily-db-update                # avoid overlapping if GH retries
+      cancel-in-progress: true
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -18,10 +20,12 @@ jobs:
       - name: Install deps
         run: pip install -r requirements.txt
 
-      - name: Run daily job
+      - name: Run daily job (guarded for 08:00 Europe/Berlin)
         run: python -m src.cron_entry
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
           FB_TOKEN: ${{ secrets.FB_TOKEN }}
           ACCOUNT_ID: ${{ secrets.ACCOUNT_ID }}
+          DB_URL : ${{secrets.DB_URL}}
+          DB_SSLMODE: ${{secrets.DB_SSLMODE}}
