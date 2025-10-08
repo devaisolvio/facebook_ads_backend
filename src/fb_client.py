@@ -1,43 +1,20 @@
-import os, json, re, requests, socket, urllib.parse as u
+import os, json, re, requests, socket, urllib.parse as u  # socket/urllib kept per your import list
 from datetime import date, timedelta
 from tenacity import retry, wait_exponential, stop_after_attempt
-from sqlalchemy import create_engine, text
+# from sqlalchemy import create_engine, text  # <- removed: not needed with REST
 
 # ----------------------------
 # Required env vars (fail fast)
 # ----------------------------
-REQUIRED = ["DB_URL", "FB_TOKEN", "ACCOUNT_ID"]
+REQUIRED = ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE", "FB_TOKEN", "ACCOUNT_ID"]
 missing = [k for k in REQUIRED if not os.getenv(k)]
 if missing:
     raise RuntimeError(f"Missing env vars: {', '.join(missing)}")
 
-DB_URL     = os.getenv("DB_URL")            # e.g. postgresql+psycopg2://user:pass@db.xxx.supabase.co:5432/postgres?sslmode=require
-FB_TOKEN   = os.getenv("FB_TOKEN", "")
-ACCOUNT_ID = os.getenv("ACCOUNT_ID", "")    # without 'act_'
-DB_SSLMODE = os.getenv("DB_SSLMODE", "require")  # default require
-
-# ----------------------------
-# SQLAlchemy engine (lazy init)
-# ----------------------------
-engine = None
-
-def build_engine():
-    # If DB_URL already has ?sslmode=require it’s fine; we also pass connect_args to be explicit.
-    connect_args = {"sslmode": DB_SSLMODE, "connect_timeout": 10}
-    eng = create_engine(
-        DB_URL,
-        connect_args=connect_args,
-        pool_pre_ping=True,   # heals broken connections
-        pool_size=2,
-        max_overflow=0,
-    )
-    return eng
-
-def get_engine():
-    global engine
-    if engine is None:
-        engine = build_engine()
-    return engine
+SUPABASE_URL = os.environ["SUPABASE_URL"].rstrip("/")
+SR_KEY       = os.environ["SUPABASE_SERVICE_ROLE"]
+FB_TOKEN     = os.environ["FB_TOKEN"]
+ACCOUNT_ID   = os.environ["ACCOUNT_ID"]  # without 'act_'
 
 # ----------------------------
 # Facebook Graph API client
@@ -76,7 +53,7 @@ def _fetch(url, params):
         try:
             r.raise_for_status()
         except requests.HTTPError:
-            print("FB error:", r.text)
+            print("FB error:", r.text[:400])
             raise
         j = r.json()
         out.extend(j.get("data", []))
@@ -100,57 +77,83 @@ def fetch_insights(*args, **kwargs):
     return _fetch(url, params)
 
 # ----------------------------
-# Upsert SQL
+# Supabase REST upsert (replaces SQLAlchemy)
 # ----------------------------
-UPSERT_SQL = text("""
-insert into fb_ad_daily
-  (ad_id, ad_name, adset_id, adset_name, campaign_id, campaign_name,
-   date_start, impressions, reach, spend, ctr,
-   purchases, revenue, raw_actions, raw_action_values, updated_at)
-values
-  (:ad_id, :ad_name, :adset_id, :adset_name, :campaign_id, :campaign_name,
-   :date_start, :impressions, :reach, :spend, :ctr,
-   :purchases, :revenue, :raw_actions, :raw_action_values, now())
-on conflict (ad_id, date_start) do update set
-  ad_name=excluded.ad_name,
-  adset_id=excluded.adset_id, adset_name=excluded.adset_name,
-  campaign_id=excluded.campaign_id, campaign_name=excluded.campaign_name,
-  impressions=excluded.impressions, reach=excluded.reach,
-  spend=excluded.spend, ctr=excluded.ctr,
-  purchases=excluded.purchases, revenue=excluded.revenue,
-  raw_actions=excluded.raw_actions, raw_action_values=excluded.raw_action_values,
-  updated_at=now();
-""")
+TABLE = "fb_ad_daily"
+ON_CONFLICT = ["ad_id", "date_start"]  # must match your unique index/constraint
 
-def upsert_rows(rows):
-    eng = get_engine()
-    inserted = 0
-    with eng.begin() as c:
-        for r in rows:
-            purchases = extract_purchase_count(r.get("actions"))
-            revenue   = extract_purchase_value(r.get("action_values"))
-            c.execute(UPSERT_SQL, dict(
-                ad_id=r["ad_id"],
-                ad_name=r.get("ad_name"),
-                adset_id=r.get("adset_id"),
-                adset_name=r.get("adset_name"),
-                campaign_id=r.get("campaign_id"),
-                campaign_name=r.get("campaign_name"),
-                date_start=r["date_start"],
-                impressions=int(float(r.get("impressions") or 0)),
-                reach=int(float(r.get("reach") or 0)),
-                spend=float(r.get("spend") or 0.0),
-                ctr=float(r.get("ctr") or 0.0),
-                purchases=purchases,
-                revenue=revenue,
-                raw_actions=json.dumps(r.get("actions")),
-                raw_action_values=json.dumps(r.get("action_values")),
-            ))
-            inserted += 1
-    print(f"[DB] upserted rows: {inserted}")
+def _sb_headers():
+    return {
+        "apikey": SR_KEY,
+        "Authorization": f"Bearer {SR_KEY}",
+        "Content-Type": "application/json",
+        # Upsert + minimal response for speed; set on_conflict to your composite key
+        "Prefer": f"resolution=merge-duplicates,return=minimal,on_conflict={','.join(ON_CONFLICT)}",
+        "Accept-Encoding": "gzip",
+    }
+
+def _nan_to_none(v):
+    # JSON can't carry NaN/Inf; make it None
+    try:
+        # catches float('nan') etc.
+        if isinstance(v, float) and (v != v):
+            return None
+    except Exception:
+        pass
+    return v
+
+def _map_row(r: dict) -> dict:
+    purchases = extract_purchase_count(r.get("actions"))
+    revenue   = extract_purchase_value(r.get("action_values"))
+    return {
+        "ad_id": r["ad_id"],
+        "ad_name": r.get("ad_name"),
+        "adset_id": r.get("adset_id"),
+        "adset_name": r.get("adset_name"),
+        "campaign_id": r.get("campaign_id"),
+        "campaign_name": r.get("campaign_name"),
+        "date_start": r["date_start"],  # ISO date string expected by your column type
+        "impressions": int(float(r.get("impressions") or 0)),
+        "reach": int(float(r.get("reach") or 0)),
+        "spend": float(r.get("spend") or 0.0),
+        "ctr": float(r.get("ctr") or 0.0),
+        "purchases": purchases,
+        "revenue": revenue,
+        # store the raw arrays (JSONB column recommended)
+        "raw_actions": r.get("actions"),
+        "raw_action_values": r.get("action_values"),
+        # let DB set updated_at via default/trigger, or add it here if you want
+    }
+
+@retry(wait=wait_exponential(min=1, max=30), stop=stop_after_attempt(5))
+def upsert_rows(rows: list[dict]) -> None:
+    """
+    Upsert via Supabase REST in chunks.
+    """
+    if not rows:
+        print("[REST] no rows to upsert")
+        return
+
+    url = f"{SUPABASE_URL}/rest/v1/{TABLE}"
+    headers = _sb_headers()
+
+    CHUNK = 1000  # tune based on row size
+    total = len(rows)
+    sent = 0
+    for i in range(0, total, CHUNK):
+        batch = rows[i:i+CHUNK]
+        payload = [{k: _nan_to_none(v) for k, v in _map_row(r).items()} for r in batch]
+        r = requests.post(url, headers=headers, data=json.dumps(payload), timeout=120)
+        try:
+            r.raise_for_status()
+        except requests.HTTPError:
+            print("[REST] upsert failed:", r.status_code, r.text[:600])
+            raise
+        sent += len(batch)
+        print(f"[REST] upserted {sent}/{total}")
 
 # ----------------------------
-# Job runners
+# Job runners (unchanged)
 # ----------------------------
 def backfill(days=365, chunk_days=30):
     """
