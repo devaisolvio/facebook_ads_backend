@@ -5,4 +5,4 @@ import pandas as pd
 
 """ fb_client.daily() """
 
-build_cohorts.temp()
+build_cohorts.build_cohorts_function()
