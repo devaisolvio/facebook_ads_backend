@@ -3,12 +3,10 @@ from dotenv import load_dotenv
 from datetime import date, timedelta
 from tenacity import retry, wait_exponential, stop_after_attempt
 
-# Load .env locally; in GitHub Actions/Render use env vars/secrets instead
+
 load_dotenv()
 
-# ----------------------------
-# Required env vars (fail fast)
-# ----------------------------
+
 REQUIRED = ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE", "FB_TOKEN", "ACCOUNT_ID"]
 missing = [k for k in REQUIRED if not os.getenv(k)]
 if missing:
@@ -64,7 +62,6 @@ def _fetch(url, params):
         next_url = (j.get("paging") or {}).get("next")
         if not next_url:
             break
-        # after the first page, pass empty params because 'next' already encodes them
         url, params = next_url, {}
     return out
 
@@ -88,8 +85,8 @@ def fetch_insights(*args, **kwargs):
     base_params = {
         "level": "ad",
         "fields": fields,
-        "time_increment": kwargs.get("time_increment", 1),  # 1 for daily
-        # NOTE: filtering is CASE-SENSITIVE. Adjust "Testing" as needed.
+        "time_increment": kwargs.get("time_increment", 1), 
+        #.
         "filtering": json.dumps([{
             "field": "campaign.name",
             "operator": "CONTAIN",
@@ -112,10 +109,10 @@ def fetch_insights(*args, **kwargs):
     return _fetch(url, params)
 
 # ----------------------------
-# Supabase REST upsert (replaces SQLAlchemy)
+# Supabase REST upsert 
 # ----------------------------
 TABLE = "fb_ad_daily"
-ON_CONFLICT = ["ad_id", "date_start"]  # must match your table's unique/index
+ON_CONFLICT = ["ad_id", "date_start"]  
 
 def _sb_headers():
     return {
@@ -205,8 +202,8 @@ def backfill(days=365, chunk_days=30):
     One-time: pull ~1y history in ~30-day chunks (daily rows).
     Adjust the date window to your needs.
     """
-    start = date.fromisoformat("2025-09-11")
-    end   = date.fromisoformat("2025-09-21")
+    start = date.fromisoformat("2025-11-04")
+    end   = date.fromisoformat("2025-11-22")
     cur = start
     while cur <= end:
         win_end = min(cur + timedelta(days=chunk_days-1), end)

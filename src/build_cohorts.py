@@ -4,14 +4,12 @@ import numpy as np
 from datetime import date, timedelta
 from dotenv import load_dotenv
 from src.util import df_to_supabase
-# =========================
-# Config / Env
-# =========================
+
 load_dotenv()
 
 SUPABASE_URL    = os.getenv("SUPABASE_URL", "").rstrip("/")
 SUPABASE_KEY    = os.getenv("SUPABASE_SERVICE_ROLE", "")
-CAMPAIGN_FILTER = "Testing"      # case-insensitive (ilike)
+CAMPAIGN_FILTER = "Testing"      
 PAGE_SIZE       = 1000
 REQUEST_TIMEOUT = 60
 
@@ -175,7 +173,7 @@ def build_outputs(gb: pd.DataFrame, launch_dims: pd.DataFrame, timer=None) -> pd
     cohort_ad_week = (
         gb.merge(launch_dims, on="ad_id", how="left")[
             ["cohort_week","week_offset","ad_id",
-             "ad_name_at_launch","adset_id","adset_name_at_launch",
+                "adset_id","adset_name_at_launch",
              "campaign_id","campaign_name_at_launch",
              "spend","purchases","revenue","roas","hit_bucket","hit_cum"]
         ]
